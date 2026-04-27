@@ -2,8 +2,7 @@
 #include <print>
 #include <system_error>
 
-void my_print(const std::error_code & /*e*/, asio::steady_timer *t,
-              int *count) {
+void my_print(const std::error_code &ec, asio::steady_timer *t, int *count) {
   if (*count < 5) {
     std::println("count: {}", *count);
     ++(*count);
@@ -11,8 +10,8 @@ void my_print(const std::error_code & /*e*/, asio::steady_timer *t,
     t->expires_at(t->expiry() + asio::chrono::seconds(1));
 
     // Replace std::bind call with lambda
-    auto on_timer_finish = [t, count](const std::error_code &ec) -> auto {
-      my_print(ec, t, count);
+    auto on_timer_finish = [t, count](const std::error_code &ec_) -> auto {
+      my_print(ec_, t, count);
     };
     t->async_wait(on_timer_finish);
   }
