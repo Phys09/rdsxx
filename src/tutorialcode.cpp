@@ -11,32 +11,35 @@
 #include <asio.hpp>
 #include <functional>
 #include <iostream>
-#include <system_error>
 
-using namespace std::chrono_literals;
-
-void print(const std::error_code & /*e*/, asio::steady_timer *t, int *count) {
-  if (*count < 5) {
-    std::cout << *count << std::endl;
-    ++(*count);
-
-    t->expires_at(t->expiry() + 1s);
-    t->async_wait([t, count](const auto &ec) { print(ec, t, count); });
+class printer {
+public:
+  printer(asio::io_context &io)
+      : timer_(io, asio::chrono::seconds(1)), count_(0) {
+    timer_.async_wait(std::bind(&printer::print, this));
   }
-}
+
+  ~printer() { std::cout << "Final count is " << count_ << std::endl; }
+
+  void print() {
+    if (count_ < 5) {
+      std::cout << count_ << std::endl;
+      ++count_;
+
+      timer_.expires_at(timer_.expiry() + asio::chrono::seconds(1));
+      timer_.async_wait(std::bind(&printer::print, this));
+    }
+  }
+
+private:
+  asio::steady_timer timer_;
+  int count_;
+};
 
 int main() {
   asio::io_context io;
-
-  int count = 0;
-  asio::steady_timer t(io, 1s);
-  // t.async_wait([ptTimer = &t, ptCount = &count] (const std::error_code & ec)
-  // { print(ec, ptTimer, ptCount); });
-  t.async_wait([&](const std::error_code &ec) { print(ec, &t, &count); });
-
+  printer p(io);
   io.run();
-
-  std::cout << "Final count is " << count << std::endl;
 
   return 0;
 }
