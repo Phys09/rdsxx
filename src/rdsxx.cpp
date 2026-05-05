@@ -1,66 +1,65 @@
 #include "asio.hpp"
+#include "asio/bind_executor.hpp"
 #include "asio/detail/chrono.hpp"
 #include "asio/io_context.hpp"
 #include "asio/steady_timer.hpp"
+#include "asio/strand.hpp"
 #include <functional>
 #include <print>
 #include <system_error>
+#include <thread>
 
 struct Printer {
 public:
-  // Constructor
-  Printer(asio::io_context &io)
-      : timer_(io, asio::chrono::seconds(1)), count_(0) {
-    timer_.async_wait([this](const std::error_code &ec) { this->print(); });
+  Printer(asio::io_context &io) noexcept
+      : strand_(asio::make_strand(io)), timer_1(io, asio::chrono::seconds(1)),
+        timer_2(io, asio::chrono::seconds(1)), count_(0) {
+    timer_1.async_wait([this](const std::error_code &ec) { this->print1(); });
+    timer_2.async_wait([this](const std::error_code &ec) { this->print2(); });
   }
-
-  void print() {
+  void print1() {
     using namespace std::chrono_literals;
-    if (count_ < 5) {
-      std::println("{}", count_);
+    if (count_ < 10) {
+      std::println("Timer 1: {}", count_);
       ++count_;
 
-      timer_.expires_at(timer_.expiry() + 1s);
-      timer_.async_wait([this](const std::error_code &ec) { print(); });
+      timer_1.expires_at(timer_1.expiry() + 1s);
+      timer_1.async_wait(asio::bind_executor(
+          strand_, [this](const std::error_code &ec) { print1(); }));
+    }
+  }
+  void print2() {
+    using namespace std::chrono_literals;
+    if (count_ < 10) {
+      std::println("Timer 2: {}", count_);
+      ++count_;
+
+      timer_2.expires_at(timer_2.expiry() + 1s);
+      timer_2.async_wait(asio::bind_executor(
+          strand_, [this](const std::error_code &ec) { print2(); }));
     }
   }
 
   ~Printer() { std::println("Final count is: {}", count_); }
 
 private:
-  asio::steady_timer timer_;
+  asio::strand<asio::io_context::executor_type> strand_;
+  asio::steady_timer timer_1;
+  asio::steady_timer timer_2;
   int count_;
 };
-
-void my_print(const std::error_code &ec, asio::steady_timer *t, int *count) {
-  if (*count < 5) {
-    std::println("count: {}", *count);
-    ++(*count);
-
-    t->expires_at(t->expiry() + asio::chrono::seconds(1));
-
-    // Replace std::bind call with lambda
-    auto on_timer_finish = [t, count](const std::error_code &ec_) -> auto {
-      my_print(ec_, t, count);
-    };
-    t->async_wait(on_timer_finish);
-  }
-}
 
 void test_asio() {
   std::println("Testing asio function now!");
   asio::io_context io;
-  int count = 0;
-  asio::steady_timer t(io, asio::chrono::seconds(1));
+  auto p = Printer(io);
 
-  // Replace std::bind call with lambda
-  auto on_timer_finish = [&](const std::error_code &ec) -> auto {
-    my_print(ec, &t, &count);
-  };
-  t.async_wait(on_timer_finish); // asynchronous wait
-  io.run();
+  std::thread t([&] { io.run(); });
 
-  std::println("Final count is: {}", count);
+  auto num_handlers_executed = io.run();
+  std::println("Number of handlers executed by io_context: {}",
+               num_handlers_executed);
+  t.join();
 }
 
 int main(int argc, char *argv[]) {
