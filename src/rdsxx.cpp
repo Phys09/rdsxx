@@ -1,68 +1,57 @@
-#include "asio.hpp"
-#include "asio/bind_executor.hpp"
-#include "asio/detail/chrono.hpp"
+#include "asio/buffer.hpp"
+#include "asio/connect.hpp"
+#include "asio/error.hpp"
 #include "asio/io_context.hpp"
-#include "asio/steady_timer.hpp"
-#include "asio/strand.hpp"
-#include <functional>
+#include "asio/ip/tcp.hpp"
+#include <array>
+#include <cstddef>
+#include <exception>
+#include <ios>
+#include <iostream>
 #include <print>
+#include <ranges>
 #include <system_error>
-#include <thread>
 
-struct Printer {
-public:
-  Printer(asio::io_context &io) noexcept
-      : strand_(asio::make_strand(io)), timer_1(io, asio::chrono::seconds(1)),
-        timer_2(io, asio::chrono::seconds(1)), count_(0) {
-    timer_1.async_wait([this](const std::error_code &ec) { this->print1(); });
-    timer_2.async_wait([this](const std::error_code &ec) { this->print2(); });
+void print_buffer(const std::array<unsigned char, 128> &buffer,
+                  const size_t n) {
+  for (int i = 0; i < n; ++i) {
+    std::print("{}", buffer[i]);
   }
-  void print1() {
-    using namespace std::chrono_literals;
-    if (count_ < 10) {
-      std::println("Timer 1: {}", count_);
-      ++count_;
-
-      timer_1.expires_at(timer_1.expiry() + 1s);
-      timer_1.async_wait(asio::bind_executor(
-          strand_, [this](const std::error_code &ec) { print1(); }));
-    }
-  }
-  void print2() {
-    using namespace std::chrono_literals;
-    if (count_ < 10) {
-      std::println("Timer 2: {}", count_);
-      ++count_;
-
-      timer_2.expires_at(timer_2.expiry() + 1s);
-      timer_2.async_wait(asio::bind_executor(
-          strand_, [this](const std::error_code &ec) { print2(); }));
-    }
-  }
-
-  ~Printer() { std::println("Final count is: {}", count_); }
-
-private:
-  asio::strand<asio::io_context::executor_type> strand_;
-  asio::steady_timer timer_1;
-  asio::steady_timer timer_2;
-  int count_;
-};
-
-void test_asio() {
-  std::println("Testing asio function now!");
-  asio::io_context io;
-  auto p = Printer(io);
-
-  std::thread t([&] { io.run(); });
-
-  auto num_handlers_executed = io.run();
-  std::println("Number of handlers executed by io_context: {}",
-               num_handlers_executed);
-  t.join();
 }
 
 int main(int argc, char *argv[]) {
-  test_asio();
+  using asio::ip::tcp;
+  try {
+    if (argc != 2) {
+      std::println(std::cerr, "Usage: Client <host>");
+      return 1;
+    }
+
+    asio::io_context io_context;
+    tcp::resolver resolver(io_context);
+    tcp::resolver::results_type endpoints =
+        resolver.resolve(argv[1], "daytime");
+    static_assert(std::ranges::range<tcp::resolver::results_type>,
+                  "results_type should be a range according to documentation");
+
+    tcp::socket socket(io_context);
+    asio::connect(socket, endpoints);
+
+    while (true) {
+      std::array<unsigned char, 128> buf;
+      std::error_code error;
+
+      size_t len = socket.read_some(asio::buffer(buf), error);
+
+      if (error == asio::error::eof) {
+        break; // Connection closed cleanly by peer
+      } else if (error) {
+        throw std::system_error(error); // some other error
+        print_buffer(buf, len);
+      }
+    }
+  } catch (const std::exception &e) {
+    std::println("[Exception thrown] {}", e.what());
+  }
   return 0;
 }

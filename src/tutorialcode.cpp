@@ -1,6 +1,6 @@
 //
-// timer.cpp
-// ~~~~~~~~~
+// client.cpp
+// ~~~~~~~~~~
 //
 // Copyright (c) 2003-2025 Christopher M. Kohlhoff (chris at kohlhoff dot com)
 //
@@ -8,62 +8,44 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 
+#include <array>
 #include <asio.hpp>
-#include <functional>
 #include <iostream>
-#include <thread>
 
-class printer {
-public:
-  printer(asio::io_context &io)
-      : strand_(asio::make_strand(io)), timer1_(io, asio::chrono::seconds(1)),
-        timer2_(io, asio::chrono::seconds(1)), count_(0) {
-    timer1_.async_wait(
-        asio::bind_executor(strand_, std::bind(&printer::print1, this)));
+using asio::ip::tcp;
 
-    timer2_.async_wait(
-        asio::bind_executor(strand_, std::bind(&printer::print2, this)));
-  }
-
-  ~printer() { std::cout << "Final count is " << count_ << std::endl; }
-
-  void print1() {
-    if (count_ < 10) {
-      std::cout << "Timer 1: " << count_ << std::endl;
-      ++count_;
-
-      timer1_.expires_at(timer1_.expiry() + asio::chrono::seconds(1));
-
-      timer1_.async_wait(
-          asio::bind_executor(strand_, std::bind(&printer::print1, this)));
+int main(int argc, char *argv[]) {
+  try {
+    if (argc != 2) {
+      std::cerr << "Usage: client <host>" << std::endl;
+      return 1;
     }
-  }
 
-  void print2() {
-    if (count_ < 10) {
-      std::cout << "Timer 2: " << count_ << std::endl;
-      ++count_;
+    asio::io_context io_context;
 
-      timer2_.expires_at(timer2_.expiry() + asio::chrono::seconds(1));
+    tcp::resolver resolver(io_context);
+    tcp::resolver::results_type endpoints =
+        resolver.resolve(argv[1], "daytime");
 
-      timer2_.async_wait(
-          asio::bind_executor(strand_, std::bind(&printer::print2, this)));
+    tcp::socket socket(io_context);
+    asio::connect(socket, endpoints);
+
+    for (;;) {
+      std::array<char, 128> buf;
+      std::error_code error;
+
+      size_t len = socket.read_some(asio::buffer(buf), error);
+
+      if (error == asio::error::eof)
+        break; // Connection closed cleanly by peer.
+      else if (error)
+        throw std::system_error(error); // Some other error.
+
+      std::cout.write(buf.data(), len);
     }
+  } catch (std::exception &e) {
+    std::cerr << e.what() << std::endl;
   }
-
-private:
-  asio::strand<asio::io_context::executor_type> strand_;
-  asio::steady_timer timer1_;
-  asio::steady_timer timer2_;
-  int count_;
-};
-
-int main() {
-  asio::io_context io;
-  printer p(io);
-  std::thread t([&] { io.run(); });
-  io.run();
-  t.join();
 
   return 0;
 }
